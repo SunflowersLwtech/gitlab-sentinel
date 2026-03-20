@@ -1,41 +1,79 @@
 name: "Sentinel Predictive Analysis"
-description: "Multi-agent flow that predicts pipeline failures, security risks, and delivery delays BEFORE they happen. Analyzes MR diffs, project context, and historical patterns to prevent problems proactively."
+description: "Multi-agent predictive DevOps intelligence. Analyzes MR diffs to predict pipeline failures, intercept security risks, and forecast delivery delays BEFORE they happen. Posts structured report as MR comment."
 public: true
 definition:
   version: v1
   environment: ambient
 
   components:
-    # STAGE 1: Triage - Rapid risk classification
+    # =============================================
+    # STAGE 1: Context Gathering (zero LLM cost)
+    # =============================================
+    - name: "gather_context"
+      type: DeterministicStepComponent
+      inputs:
+        - from: "context:goal"
+          as: "url"
+      tool_name: "get_merge_request"
+      ui_log_events:
+        - "on_tool_execution_success"
+        - "on_tool_execution_failed"
+
+    - name: "fetch_diffs"
+      type: DeterministicStepComponent
+      inputs:
+        - from: "context:goal"
+          as: "url"
+      tool_name: "list_merge_request_diffs"
+      ui_log_events:
+        - "on_tool_execution_success"
+        - "on_tool_execution_failed"
+
+    # =============================================
+    # STAGE 2: Triage - Rapid risk classification
+    # =============================================
     - name: "triage_agent"
       type: AgentComponent
-      prompt_id: "sentinel_triage_prompt"
+      prompt_id: "sentinel_triage"
       inputs:
         - from: "context:goal"
           as: "user_request"
         - from: "context:project_id"
           as: "project_id"
+        - from: "context:gather_context.tool_responses"
+          as: "mr_details"
+        - from: "context:fetch_diffs.tool_responses"
+          as: "mr_diffs"
+        - from: "context:inputs.user_rule"
+          as: "agents_dot_md"
+          optional: True
       toolset:
-        - "get_project"
-        - "get_merge_request"
-        - "list_merge_request_diffs"
         - "read_file"
         - "find_files"
+        - "list_dir"
         - "grep"
+        - "get_repository_file"
       ui_log_events:
-        - on_agent_final_answer
-        - on_tool_execution_success
-        - on_tool_execution_failed
+        - "on_agent_final_answer"
+        - "on_tool_execution_success"
+        - "on_tool_execution_failed"
 
-    # STAGE 2: Pipeline Prediction
+    # =============================================
+    # STAGE 3: Pipeline Prediction
+    # =============================================
     - name: "pipeline_predictor"
       type: AgentComponent
-      prompt_id: "sentinel_pipeline_prompt"
+      prompt_id: "sentinel_pipeline"
       inputs:
         - from: "context:triage_agent.final_answer"
           as: "triage_results"
+        - from: "context:fetch_diffs.tool_responses"
+          as: "mr_diffs"
         - from: "context:project_id"
           as: "project_id"
+        - from: "context:inputs.user_rule"
+          as: "agents_dot_md"
+          optional: True
       toolset:
         - "read_file"
         - "find_files"
@@ -46,33 +84,45 @@ definition:
         - "get_pipeline_errors"
         - "ci_linter"
       ui_log_events:
-        - on_agent_final_answer
-        - on_tool_execution_success
-        - on_tool_execution_failed
+        - "on_agent_final_answer"
+        - "on_tool_execution_success"
+        - "on_tool_execution_failed"
 
-    # STAGE 3: Security Scanning
+    # =============================================
+    # STAGE 4: Security Scanning
+    # =============================================
     - name: "security_scanner"
       type: AgentComponent
-      prompt_id: "sentinel_security_prompt"
+      prompt_id: "sentinel_security"
       inputs:
         - from: "context:triage_agent.final_answer"
           as: "triage_results"
+        - from: "context:fetch_diffs.tool_responses"
+          as: "mr_diffs"
         - from: "context:project_id"
           as: "project_id"
+        - from: "context:inputs.user_rule"
+          as: "agents_dot_md"
+          optional: True
       toolset:
         - "read_file"
         - "find_files"
         - "grep"
         - "get_repository_file"
+        - "list_vulnerabilities"
+        - "get_vulnerability_details"
+        - "get_security_finding_details"
       ui_log_events:
-        - on_agent_final_answer
-        - on_tool_execution_success
-        - on_tool_execution_failed
+        - "on_agent_final_answer"
+        - "on_tool_execution_success"
+        - "on_tool_execution_failed"
 
-    # STAGE 4: Report findings as MR comment
+    # =============================================
+    # STAGE 5: Report - Post MR comment
+    # =============================================
     - name: "reporter"
-      type: AgentComponent
-      prompt_id: "sentinel_reporter_prompt"
+      type: OneOffComponent
+      prompt_id: "sentinel_reporter"
       inputs:
         - from: "context:triage_agent.final_answer"
           as: "triage_results"
@@ -80,64 +130,109 @@ definition:
           as: "pipeline_predictions"
         - from: "context:security_scanner.final_answer"
           as: "security_findings"
+        - from: "context:gather_context.tool_responses"
+          as: "mr_details"
         - from: "context:project_id"
           as: "project_id"
       toolset:
         - "create_merge_request_note"
-        - "get_merge_request"
+      max_correction_attempts: 3
       ui_log_events:
-        - on_agent_final_answer
-        - on_tool_execution_success
-        - on_tool_execution_failed
+        - "on_tool_call_input"
+        - "on_tool_execution_success"
+        - "on_tool_execution_failed"
 
+  # =============================================
+  # PROMPTS - Inline (no prompt_version = local)
+  # =============================================
   prompts:
-    - prompt_id: "sentinel_triage_prompt"
+    - prompt_id: "sentinel_triage"
       name: "Sentinel Triage"
       prompt_template:
         system: |
-          You are the Sentinel Triage Agent - the first line of predictive DevOps intelligence.
+          <role>
+          You are the Sentinel Triage Agent - the first line of predictive DevOps intelligence
+          built on GitLab Duo Agent Platform.
+          </role>
 
-          Analyze the merge request and classify risks across three dimensions:
-          1. Pipeline Risk (dependency conflicts, build issues, test failures)
-          2. Security Risk (hardcoded secrets, injection vulnerabilities, auth weaknesses)
-          3. Delivery Risk (complexity, missing tests, breaking changes)
-
-          Use tools to read the MR diffs and relevant project files.
-          Output a JSON risk assessment with overall_risk_level and per-dimension scores (0-10).
-
+          <mission>
+          Perform rapid risk assessment of merge request changes across three dimensions.
           You are PREDICTIVE - catch problems BEFORE they happen.
+          </mission>
+
+          <risk_dimensions>
+          1. PIPELINE RISK: dependency conflicts, CI config issues, broken imports, test anti-patterns
+          2. SECURITY RISK: hardcoded secrets, SQL injection, auth weaknesses, supply chain risks
+          3. DELIVERY RISK: high complexity, missing tests, breaking changes, large blast radius
+          </risk_dimensions>
+
+          <instructions>
+          - Read the MR diffs and key project files (CI config, dependency files)
+          - Score each dimension 0-10
+          - Be thorough but fast - scan file names, diff patterns, key indicators
+          - When in doubt, flag the risk (false negative worse than false positive)
+          </instructions>
+
+          <output_format>
+          Respond ONLY with valid JSON:
+          {
+            "overall_risk_level": "low|medium|high|critical",
+            "pipeline_risk": {"score": 0-10, "indicators": ["..."], "recommendation": "..."},
+            "security_risk": {"score": 0-10, "indicators": ["..."], "recommendation": "..."},
+            "delivery_risk": {"score": 0-10, "indicators": ["..."], "recommendation": "..."},
+            "summary": "one-line summary"
+          }
+          </output_format>
         user: |
-          Analyze this for risks:
+          Analyze this merge request for risks:
           {{user_request}}
+
+          MR Details: {{mr_details}}
+          Code Changes: {{mr_diffs}}
+
           Project ID: {{project_id}}
         placeholder: history
       unit_primitives: []
       params:
         timeout: 180
 
-    - prompt_id: "sentinel_pipeline_prompt"
+    - prompt_id: "sentinel_pipeline"
       name: "Sentinel Pipeline Predictor"
       prompt_template:
         system: |
-          You are the Sentinel Pipeline Predictor. Based on the triage results,
-          perform deep analysis to predict CI/CD pipeline failures.
+          <role>
+          You are the Sentinel Pipeline Predictor. You predict CI/CD failures BEFORE they occur.
+          </role>
 
-          Check for:
-          - Dependency conflicts (version mismatches, missing deps)
-          - Build configuration issues (invalid CI config, wrong Docker images)
-          - Test failures (broken imports, missing fixtures, flaky patterns)
-          - Integration issues (API contract changes without test updates)
+          <methodology>
+          1. DEPENDENCY CONFLICTS: Check version compatibility, lock file consistency, peer deps
+          2. BUILD CONFIG: Validate CI YAML with ci_linter, check Docker image refs, env vars
+          3. TEST FAILURES: Identify tests for modified code, broken imports, hardcoded values
+          4. INTEGRATION: API contract changes without test updates, migration ordering
+          </methodology>
 
-          Read the .gitlab-ci.yml, dependency files, and test files.
-          Use ci_linter to validate CI configuration changes.
+          <instructions>
+          - Read .gitlab-ci.yml, dependency files (package.json, requirements.txt, Gemfile, go.mod)
+          - Check recent pipeline history with get_job_logs if available
+          - Use ci_linter to validate CI config changes
+          - For each predicted failure, suggest a specific preventive action
+          </instructions>
 
-          Output JSON with:
-          - prediction: pass/likely_fail/high_risk_fail
-          - confidence: 0.0-1.0
-          - predicted_failures: [{type, description, prevention, auto_fixable}]
-          - pipeline_health_score: 0-100
+          <output_format>
+          Respond ONLY with valid JSON:
+          {
+            "prediction": "pass|likely_fail|high_risk_fail",
+            "confidence": 0.0-1.0,
+            "predicted_failures": [
+              {"type": "dependency|build|test|integration", "description": "...", "prevention": "...", "auto_fixable": true|false}
+            ],
+            "pipeline_health_score": 0-100,
+            "recommendations": ["ordered list of preventive actions"]
+          }
+          </output_format>
         user: |
           Triage Results: {{triage_results}}
+          Code Changes: {{mr_diffs}}
           Project ID: {{project_id}}
 
           Predict pipeline outcomes and suggest preventive actions.
@@ -146,25 +241,42 @@ definition:
       params:
         timeout: 180
 
-    - prompt_id: "sentinel_security_prompt"
+    - prompt_id: "sentinel_security"
       name: "Sentinel Security Scanner"
       prompt_template:
         system: |
-          You are the Sentinel Security Scanner. Proactively identify security
-          vulnerabilities in code changes.
+          <role>
+          You are the Sentinel Security Scanner. Proactively identify vulnerabilities in code changes.
+          </role>
 
-          Scan for (by severity):
-          CRITICAL: Hardcoded credentials, SQL injection, RCE, auth bypass
-          HIGH: Missing input validation, insecure crypto, path traversal, SSRF
-          MEDIUM: Info disclosure, missing security headers, verbose errors
-          LOW: Deprecated security functions, missing audit logging
+          <severity_levels>
+          CRITICAL: Hardcoded credentials/API keys, SQL injection, RCE, authentication bypass, insecure deserialization
+          HIGH: Missing input validation, insecure crypto, path traversal, SSRF, missing rate limiting
+          MEDIUM: Information disclosure, missing security headers, verbose errors, missing CSRF
+          LOW: Deprecated security functions, missing audit logging, code quality with security implications
+          </severity_levels>
 
-          Output JSON with:
-          - scan_result: clean/findings/critical_findings
-          - findings: [{severity, type, file, line, description, cwe, recommendation, auto_fixable}]
-          - security_score: 0-100
+          <instructions>
+          - Read full file contents for code context around changed lines
+          - Check for existing vulnerability findings with list_vulnerabilities
+          - Reference CWE numbers when applicable
+          - For each finding, suggest a specific fix
+          </instructions>
+
+          <output_format>
+          Respond ONLY with valid JSON:
+          {
+            "scan_result": "clean|findings|critical_findings",
+            "findings": [
+              {"severity": "critical|high|medium|low", "type": "...", "file": "...", "description": "...", "cwe": "CWE-XXX", "recommendation": "...", "auto_fixable": true|false}
+            ],
+            "security_score": 0-100,
+            "summary": "..."
+          }
+          </output_format>
         user: |
           Triage Results: {{triage_results}}
+          Code Changes: {{mr_diffs}}
           Project ID: {{project_id}}
 
           Perform deep security analysis. Read full file contents for context.
@@ -173,48 +285,63 @@ definition:
       params:
         timeout: 180
 
-    - prompt_id: "sentinel_reporter_prompt"
+    - prompt_id: "sentinel_reporter"
       name: "Sentinel Reporter"
       prompt_template:
         system: |
-          You are the Sentinel Reporter. Create a clear, actionable Markdown report
-          and post it as a merge request comment.
+          <role>
+          You are the Sentinel Reporter. Create a structured Markdown report and post it as an MR comment.
+          </role>
 
-          Report format:
-          ## Sentinel Predictive Analysis Report
+          <report_format>
+          ## :shield: Sentinel Predictive Analysis Report
 
-          **Overall Risk:** [LEVEL] (score/100)
+          **Overall Risk:** [EMOJI] [LEVEL]
 
-          ### Pipeline Prediction
-          [Summary with specific predictions]
+          ### :construction: Pipeline Prediction
+          [prediction with confidence, specific risks, preventive actions]
 
-          ### Security Assessment
-          [Findings with severity and CWE references]
+          ### :lock: Security Assessment
+          [findings by severity, CWE references, fix suggestions]
 
-          ### Recommended Actions
+          ### :chart_with_upwards_trend: Delivery Risk
+          [complexity assessment, test coverage gaps, recommendations]
+
+          ### :white_check_mark: Recommended Actions
           1. [Prioritized action items]
 
           ---
           *Sentinel v1.0 | Powered by GitLab Duo Agent Platform + Anthropic Claude*
+          *Predictive analysis - catching problems before they happen*
+          </report_format>
 
-          Use create_merge_request_note to post the report.
-          First use get_merge_request to find the MR IID from the context.
+          <instructions>
+          - Use create_merge_request_note to post the report
+          - Extract the MR IID from the mr_details context
+          - Keep the report concise but comprehensive
+          - Lead with the most critical findings
+          - Every finding must have an actionable recommendation
+          </instructions>
         user: |
-          Create a Sentinel Analysis Report from these findings:
+          Create and post a Sentinel Analysis Report:
 
           Triage: {{triage_results}}
           Pipeline: {{pipeline_predictions}}
           Security: {{security_findings}}
-
+          MR Details: {{mr_details}}
           Project ID: {{project_id}}
-
-          Post this report as a comment on the relevant merge request.
-        placeholder: history
       unit_primitives: []
       params:
         timeout: 120
 
+  # =============================================
+  # ROUTERS
+  # =============================================
   routers:
+    - from: "gather_context"
+      to: "fetch_diffs"
+    - from: "fetch_diffs"
+      to: "triage_agent"
     - from: "triage_agent"
       to: "pipeline_predictor"
     - from: "pipeline_predictor"
@@ -225,4 +352,4 @@ definition:
       to: "end"
 
   flow:
-    entry_point: "triage_agent"
+    entry_point: "gather_context"
