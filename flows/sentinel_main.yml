@@ -1,0 +1,228 @@
+name: "Sentinel Predictive Analysis"
+description: "Multi-agent flow that predicts pipeline failures, security risks, and delivery delays BEFORE they happen. Analyzes MR diffs, project context, and historical patterns to prevent problems proactively."
+public: true
+definition:
+  version: v1
+  environment: ambient
+
+  components:
+    # STAGE 1: Triage - Rapid risk classification
+    - name: "triage_agent"
+      type: AgentComponent
+      prompt_id: "sentinel_triage_prompt"
+      inputs:
+        - from: "context:goal"
+          as: "user_request"
+        - from: "context:project_id"
+          as: "project_id"
+      toolset:
+        - "get_project"
+        - "get_merge_request"
+        - "list_merge_request_diffs"
+        - "read_file"
+        - "find_files"
+        - "grep"
+      ui_log_events:
+        - on_agent_final_answer
+        - on_tool_execution_success
+        - on_tool_execution_failed
+
+    # STAGE 2: Pipeline Prediction
+    - name: "pipeline_predictor"
+      type: AgentComponent
+      prompt_id: "sentinel_pipeline_prompt"
+      inputs:
+        - from: "context:triage_agent.final_answer"
+          as: "triage_results"
+        - from: "context:project_id"
+          as: "project_id"
+      toolset:
+        - "read_file"
+        - "find_files"
+        - "grep"
+        - "get_repository_file"
+        - "get_job_logs"
+        - "get_pipeline_failing_jobs"
+        - "get_pipeline_errors"
+        - "ci_linter"
+      ui_log_events:
+        - on_agent_final_answer
+        - on_tool_execution_success
+        - on_tool_execution_failed
+
+    # STAGE 3: Security Scanning
+    - name: "security_scanner"
+      type: AgentComponent
+      prompt_id: "sentinel_security_prompt"
+      inputs:
+        - from: "context:triage_agent.final_answer"
+          as: "triage_results"
+        - from: "context:project_id"
+          as: "project_id"
+      toolset:
+        - "read_file"
+        - "find_files"
+        - "grep"
+        - "get_repository_file"
+      ui_log_events:
+        - on_agent_final_answer
+        - on_tool_execution_success
+        - on_tool_execution_failed
+
+    # STAGE 4: Report findings as MR comment
+    - name: "reporter"
+      type: AgentComponent
+      prompt_id: "sentinel_reporter_prompt"
+      inputs:
+        - from: "context:triage_agent.final_answer"
+          as: "triage_results"
+        - from: "context:pipeline_predictor.final_answer"
+          as: "pipeline_predictions"
+        - from: "context:security_scanner.final_answer"
+          as: "security_findings"
+        - from: "context:project_id"
+          as: "project_id"
+      toolset:
+        - "create_merge_request_note"
+        - "get_merge_request"
+      ui_log_events:
+        - on_agent_final_answer
+        - on_tool_execution_success
+        - on_tool_execution_failed
+
+  prompts:
+    - prompt_id: "sentinel_triage_prompt"
+      name: "Sentinel Triage"
+      prompt_template:
+        system: |
+          You are the Sentinel Triage Agent - the first line of predictive DevOps intelligence.
+
+          Analyze the merge request and classify risks across three dimensions:
+          1. Pipeline Risk (dependency conflicts, build issues, test failures)
+          2. Security Risk (hardcoded secrets, injection vulnerabilities, auth weaknesses)
+          3. Delivery Risk (complexity, missing tests, breaking changes)
+
+          Use tools to read the MR diffs and relevant project files.
+          Output a JSON risk assessment with overall_risk_level and per-dimension scores (0-10).
+
+          You are PREDICTIVE - catch problems BEFORE they happen.
+        user: |
+          Analyze this for risks:
+          {{user_request}}
+          Project ID: {{project_id}}
+        placeholder: history
+      unit_primitives: []
+      params:
+        timeout: 180
+
+    - prompt_id: "sentinel_pipeline_prompt"
+      name: "Sentinel Pipeline Predictor"
+      prompt_template:
+        system: |
+          You are the Sentinel Pipeline Predictor. Based on the triage results,
+          perform deep analysis to predict CI/CD pipeline failures.
+
+          Check for:
+          - Dependency conflicts (version mismatches, missing deps)
+          - Build configuration issues (invalid CI config, wrong Docker images)
+          - Test failures (broken imports, missing fixtures, flaky patterns)
+          - Integration issues (API contract changes without test updates)
+
+          Read the .gitlab-ci.yml, dependency files, and test files.
+          Use ci_linter to validate CI configuration changes.
+
+          Output JSON with:
+          - prediction: pass/likely_fail/high_risk_fail
+          - confidence: 0.0-1.0
+          - predicted_failures: [{type, description, prevention, auto_fixable}]
+          - pipeline_health_score: 0-100
+        user: |
+          Triage Results: {{triage_results}}
+          Project ID: {{project_id}}
+
+          Predict pipeline outcomes and suggest preventive actions.
+        placeholder: history
+      unit_primitives: []
+      params:
+        timeout: 180
+
+    - prompt_id: "sentinel_security_prompt"
+      name: "Sentinel Security Scanner"
+      prompt_template:
+        system: |
+          You are the Sentinel Security Scanner. Proactively identify security
+          vulnerabilities in code changes.
+
+          Scan for (by severity):
+          CRITICAL: Hardcoded credentials, SQL injection, RCE, auth bypass
+          HIGH: Missing input validation, insecure crypto, path traversal, SSRF
+          MEDIUM: Info disclosure, missing security headers, verbose errors
+          LOW: Deprecated security functions, missing audit logging
+
+          Output JSON with:
+          - scan_result: clean/findings/critical_findings
+          - findings: [{severity, type, file, line, description, cwe, recommendation, auto_fixable}]
+          - security_score: 0-100
+        user: |
+          Triage Results: {{triage_results}}
+          Project ID: {{project_id}}
+
+          Perform deep security analysis. Read full file contents for context.
+        placeholder: history
+      unit_primitives: []
+      params:
+        timeout: 180
+
+    - prompt_id: "sentinel_reporter_prompt"
+      name: "Sentinel Reporter"
+      prompt_template:
+        system: |
+          You are the Sentinel Reporter. Create a clear, actionable Markdown report
+          and post it as a merge request comment.
+
+          Report format:
+          ## Sentinel Predictive Analysis Report
+
+          **Overall Risk:** [LEVEL] (score/100)
+
+          ### Pipeline Prediction
+          [Summary with specific predictions]
+
+          ### Security Assessment
+          [Findings with severity and CWE references]
+
+          ### Recommended Actions
+          1. [Prioritized action items]
+
+          ---
+          *Sentinel v1.0 | Powered by GitLab Duo Agent Platform + Anthropic Claude*
+
+          Use create_merge_request_note to post the report.
+          First use get_merge_request to find the MR IID from the context.
+        user: |
+          Create a Sentinel Analysis Report from these findings:
+
+          Triage: {{triage_results}}
+          Pipeline: {{pipeline_predictions}}
+          Security: {{security_findings}}
+
+          Project ID: {{project_id}}
+
+          Post this report as a comment on the relevant merge request.
+        placeholder: history
+      unit_primitives: []
+      params:
+        timeout: 120
+
+  routers:
+    - from: "triage_agent"
+      to: "pipeline_predictor"
+    - from: "pipeline_predictor"
+      to: "security_scanner"
+    - from: "security_scanner"
+      to: "reporter"
+    - from: "reporter"
+      to: "end"
+
+  flow:
+    entry_point: "triage_agent"
