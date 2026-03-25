@@ -1,0 +1,69 @@
+{
+  "id": "D",
+  "name": "False Positive Test (All Green)",
+  "description": "MR only changes a single line in README.md — should trigger NO high-risk findings",
+  "input": {
+    "mr_description": "Fix typo in README",
+    "changed_files": ["README.md"],
+    "changed_lines": 1,
+    "injected_issues": []
+  },
+  "expected": {
+    "triage": {
+      "overall_risk_level": ["low"],
+      "pipeline_risk_score_max": 2,
+      "security_risk_score_max": 2,
+      "delivery_risk_score_max": 2
+    },
+    "pipeline_predictor": {
+      "prediction": ["pass"],
+      "confidence_min": 0.8,
+      "pipeline_health_score_min": 80,
+      "predicted_failures_max": 0
+    },
+    "security_scanner": {
+      "scan_result": "clean",
+      "max_findings": 0,
+      "security_score_min": 90
+    },
+    "reporter": {
+      "must_post_comment": true,
+      "must_not_contain": ["critical", "high_risk_fail", "CRITICAL"],
+      "should_contain": ["low risk", "no significant"]
+    }
+  },
+  "pass_criteria": {
+    "no_false_alarms": {
+      "description": "No critical or high severity findings reported",
+      "threshold": 0
+    },
+    "correct_low_risk": {
+      "description": "Overall risk level is 'low'",
+      "threshold": "low"
+    },
+    "pipeline_pass": {
+      "description": "Pipeline prediction is 'pass'",
+      "threshold": "pass"
+    },
+    "efficient_execution": {
+      "description": "Total tool calls across all agents",
+      "threshold_max": 30
+    }
+  },
+  "expected_tool_trajectory": {
+    "triage_agent": {
+      "must_call": ["get_merge_request", "list_merge_request_diffs"],
+      "max_tool_calls": 8
+    },
+    "pipeline_predictor": {
+      "max_tool_calls": 8
+    },
+    "security_scanner": {
+      "max_tool_calls": 5
+    },
+    "reporter": {
+      "must_call": ["create_merge_request_note"],
+      "max_tool_calls": 3
+    }
+  }
+}

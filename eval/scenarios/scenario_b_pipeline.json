@@ -1,0 +1,63 @@
+{
+  "id": "B",
+  "name": "Dependency Conflict Detection",
+  "description": "MR updates flask to 3.x but werkzeug is pinned to 2.x, causing incompatibility",
+  "input": {
+    "mr_description": "Upgrade Flask to 3.1.0",
+    "changed_files": ["requirements.txt"],
+    "injected_issues": [
+      {
+        "type": "dependency_conflict",
+        "detail": "flask==3.1.0 requires werkzeug>=3.0 but werkzeug==2.3.0 is pinned"
+      }
+    ]
+  },
+  "expected": {
+    "triage": {
+      "overall_risk_level": ["medium", "high"],
+      "pipeline_risk_score_min": 6,
+      "must_flag_pipeline": true
+    },
+    "pipeline_predictor": {
+      "prediction": ["likely_fail", "high_risk_fail"],
+      "confidence_min": 0.5,
+      "must_mention": ["dependency", "version", "conflict", "incompatib"],
+      "predicted_failures_min": 1,
+      "pipeline_health_score_max": 50
+    },
+    "security_scanner": {
+      "scan_result": ["clean", "findings"],
+      "max_critical_findings": 0,
+      "comment": "No security issue, just dependency conflict"
+    },
+    "reporter": {
+      "must_post_comment": true,
+      "must_contain_keywords": ["pipeline", "dependency", "fail"]
+    }
+  },
+  "pass_criteria": {
+    "prediction_accuracy": {
+      "description": "Correctly predicts pipeline will likely fail",
+      "threshold": "likely_fail_or_high_risk"
+    },
+    "root_cause_identified": {
+      "description": "Mentions flask/werkzeug version conflict",
+      "threshold": "mentioned"
+    },
+    "false_security_alarm": {
+      "description": "Does NOT flag as critical security issue",
+      "threshold": 0
+    }
+  },
+  "expected_tool_trajectory": {
+    "triage_agent": {
+      "must_call": ["get_merge_request", "list_merge_request_diffs"],
+      "should_call": ["read_file"]
+    },
+    "pipeline_predictor": {
+      "must_call": ["read_file"],
+      "should_call": ["grep"],
+      "max_tool_calls": 15
+    }
+  }
+}

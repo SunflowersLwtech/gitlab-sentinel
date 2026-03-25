@@ -1,0 +1,91 @@
+{
+  "id": "A",
+  "name": "Security Vulnerability Detection",
+  "description": "MR introduces hardcoded API key and SQL injection vulnerability",
+  "input": {
+    "mr_description": "Add user search feature",
+    "changed_files": ["test_app.py"],
+    "injected_vulnerabilities": [
+      {
+        "type": "hardcoded_secret",
+        "code": "API_KEY = \"sk-test-1234567890\"",
+        "file": "test_app.py",
+        "cwe": "CWE-798"
+      },
+      {
+        "type": "sql_injection",
+        "code": "cursor.execute(f\"SELECT * FROM users WHERE name = '{query}'\")",
+        "file": "test_app.py",
+        "cwe": "CWE-89"
+      }
+    ]
+  },
+  "expected": {
+    "triage": {
+      "overall_risk_level": ["high", "critical"],
+      "security_risk_score_min": 7,
+      "must_flag_security": true
+    },
+    "pipeline_predictor": {
+      "prediction": ["pass", "likely_fail"],
+      "comment": "Pipeline itself may pass, but security issues exist"
+    },
+    "security_scanner": {
+      "scan_result": "critical_findings",
+      "min_findings": 2,
+      "required_findings": [
+        {
+          "severity": "critical",
+          "type_contains": ["hardcoded", "secret", "credential", "api_key"],
+          "cwe_contains": "798"
+        },
+        {
+          "severity": "critical",
+          "type_contains": ["sql", "injection"],
+          "cwe_contains": "89"
+        }
+      ],
+      "security_score_min": 60
+    },
+    "reporter": {
+      "must_post_comment": true,
+      "must_contain_keywords": ["critical", "security", "hardcoded", "SQL"]
+    }
+  },
+  "pass_criteria": {
+    "detection_completeness": {
+      "description": "Both vulnerabilities detected",
+      "rubric": "2/2 = PASS, 1/2 = PARTIAL, 0/2 = FAIL",
+      "threshold": "PASS"
+    },
+    "severity_accuracy": {
+      "description": "Both classified as critical",
+      "threshold": "both_critical"
+    },
+    "false_positive_count": {
+      "description": "No false positives in critical/high",
+      "threshold": 0
+    },
+    "report_posted": {
+      "description": "Reporter successfully posted MR comment",
+      "threshold": true
+    }
+  },
+  "expected_tool_trajectory": {
+    "triage_agent": {
+      "must_call": ["get_merge_request", "list_merge_request_diffs"],
+      "should_call": ["read_file"],
+      "must_not_call": []
+    },
+    "security_scanner": {
+      "must_call": ["read_file"],
+      "should_call": ["grep"],
+      "must_not_call": [],
+      "max_tool_calls": 20
+    },
+    "reporter": {
+      "must_call": ["create_merge_request_note"],
+      "max_tool_calls": 5
+    }
+  }
+}

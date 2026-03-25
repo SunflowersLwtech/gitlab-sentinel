@@ -1,0 +1,59 @@
+{
+  "id": "C",
+  "name": "High Complexity Delivery Risk",
+  "description": "MR modifies 15+ files across multiple directories with no test updates",
+  "input": {
+    "mr_description": "Refactor auth module and update API endpoints",
+    "changed_files_count": 17,
+    "directories_touched": 5,
+    "test_files_changed": 0,
+    "injected_issues": [
+      {
+        "type": "high_complexity",
+        "detail": "17 files changed across 5 directories"
+      },
+      {
+        "type": "missing_test_coverage",
+        "detail": "No test files updated despite major refactor"
+      }
+    ]
+  },
+  "expected": {
+    "triage": {
+      "overall_risk_level": ["high", "critical"],
+      "delivery_risk_score_min": 7,
+      "must_flag_delivery": true
+    },
+    "pipeline_predictor": {
+      "prediction": ["likely_fail", "high_risk_fail"],
+      "must_mention": ["test", "coverage", "complex"]
+    },
+    "security_scanner": {
+      "comment": "May find issues in auth module changes"
+    },
+    "reporter": {
+      "must_post_comment": true,
+      "must_contain_keywords": ["complexity", "test", "coverage", "split"]
+    }
+  },
+  "pass_criteria": {
+    "complexity_detected": {
+      "description": "Flags high complexity / blast radius",
+      "threshold": "detected"
+    },
+    "test_gap_detected": {
+      "description": "Notes missing test coverage",
+      "threshold": "detected"
+    },
+    "actionable_recommendation": {
+      "description": "Suggests splitting MR or adding tests",
+      "threshold": "present"
+    }
+  },
+  "expected_tool_trajectory": {
+    "triage_agent": {
+      "must_call": ["get_merge_request", "list_merge_request_diffs"],
+      "should_call": ["find_files"]
+    }
+  }
+}
